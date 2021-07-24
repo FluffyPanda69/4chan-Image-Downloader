@@ -1,4 +1,7 @@
+import ctypes
 import os
+import platform
+import threading
 import requests
 import time
 import textwrap
@@ -186,9 +189,9 @@ def main():
         for thread in threads:
             tuples.append((currentboard, thread))
 
-        with Pool(60) as p1:
-            res_links = p1.starmap(save_links, tuples)
-        p1.close()
+        with Pool(60) as p:
+            res_links = p.starmap(save_links, tuples)
+        p.close()
 
         file_links = []
         for res in res_links:
@@ -198,11 +201,20 @@ def main():
 
         print("Got all image links, starting download...\n")
 
-        with Pool(60) as p2:
-            p2.starmap(download_link, file_links)
-        p2.close()
+        dl_threads = []
+
+        for fl in file_links:
+            t = threading.Thread(target=download_link, args=fl)
+            dl_threads.append(t)
+            t.start()
+
+        for t in dl_threads:
+            t.join()
 
         print("Got all images currently on board " + board_slash(currentboard) + "\n")
+
+        if platform.system().lower() == "windows":
+            ctypes.windll.user32.FlashWindow(ctypes.windll.kernel32.GetConsoleWindow(), True)
 
 
 if __name__ == "__main__":
