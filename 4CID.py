@@ -143,7 +143,11 @@ def download_link(b, i, f):
             file.write(im.read())
         file.close()
         print(f + " saved\n")
-    except urllib.error:
+    except urllib.error.HTTPError:
+        print(f + " not saved (404)\n")
+        pass
+    except urllib.error.URLError:
+        print(f + "not saved (???)\n")
         pass
 
 
