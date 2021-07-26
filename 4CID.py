@@ -1,13 +1,9 @@
-import ctypes
 import os
-import platform
 import threading
 import requests
 import time
-import textwrap
 from bs4 import BeautifulSoup
 from os import path
-from multiprocessing import Pool
 import urllib.error
 import urllib.request
 
@@ -16,17 +12,11 @@ basedir = "4ch"
 savepath = ""
 boards = []
 exits = ["exit", "e", "quit", "q", ":q", ":q?", "q!", "wq", "kill"]
-
 api_url1 = "https://a.4cdn.org"
 api_url2 = "threads.json"
 http = "http:"
 url4chan = "https://boards.4channel.org"
 urlthread = "thread/"
-
-# thread filters
-minreplies = 0
-maxthreadage = 86400 * 7
-maxthreadtime = int(time.time()) - maxthreadage
 
 
 # check if file is a format we can download, skip it if we have it
@@ -34,7 +24,7 @@ def filename_check(filename):
     name = str(filename)
     if path.exists(savepath + filename):
         return False
-    good_formats = [".bmp", ".ico", ".jpeg", ".jpg", ".png", ".gif"]
+    good_formats = [".jpeg", ".jpg", ".png"]
     for form in good_formats:
         if name.endswith(form):
             return True
@@ -43,9 +33,8 @@ def filename_check(filename):
 
 def board_check(boardname):
     if boardname in boards:
-        return boardname
-    else:
-        return ""
+        return True
+    return False
 
 
 def board_slash(boardname):
@@ -57,21 +46,15 @@ def board_slash(boardname):
 
 
 def get_threads(board):
-    global minreplies
-
     queryurl = api_url1 + board_slash(board) + api_url2
     time.sleep(1)
     result = requests.get(queryurl)
     result.raise_for_status()
     jsonresponse = result.json()
     threadlist = []
-
     for page in jsonresponse:
         for thread in page["threads"]:
-            if thread["last_modified"] > maxthreadtime:
-                if thread["replies"] > minreplies:
-                    threadlist.append(int(thread["no"]))
-
+            threadlist.append(int(thread["no"]))
     return threadlist
 
 
@@ -82,59 +65,46 @@ def get_boards():
     result.raise_for_status()
     jsonresponse = result.json()
     boardlist = []
-
+    print("\nFound the following boards:")
     for board in jsonresponse["boards"]:
-        boardlist.append(str(board["board"]))
-
+        bname = str(board["board"])
+        bdesc = str(board["title"])
+        boardlist.append(bname)
+        print(bname + " : " + bdesc)
     return boardlist
 
 
 def f_exit():
-    print("Exiting...")
+    print("Exiting...\n")
     exit(0)
 
 
-def save_links(board, thread_number):
+def save_links(board, thread_number, image_links):
     # request build
     board = board_slash(board)
-    fullurl = url4chan + board + urlthread + str(thread_number)
+    fullurl = url4chan + board + urlthread + thread_number
     result = requests.get(fullurl)
-
     # page soup
     if result.status_code == 200:
         soup = BeautifulSoup(result.content, "html.parser")
     else:
         return 1
-
     # save images to board name folder
     global savepath
     savepath = basedir + board
-
-    # create folder if not present
-    try:
-        os.makedirs(savepath)
-    except FileExistsError:
-        pass
-    except IOError:
-        f_exit()
-
-    image_links = []
-
     # get all image links
     for image in soup.find_all('a', {'class': 'fileThumb'}):
         # take full res version
         image = image.get('href')
         # strip url for filename
         filename = str(image).rpartition("/")[2]
-        # skip weird formats
+        # skip weird formats and already downloaded files
         if not (filename_check(filename)):
             continue
         # rebuild valid link
         image = http + image
-        image_links.append((image, filename))
-
-    if len(image_links) > 0:
-        return image_links
+        if len(image) > 32:
+            image_links.append((image, filename))
 
 
 def download_link(b, i, f):
@@ -144,13 +114,14 @@ def download_link(b, i, f):
         with open(savepath + f, 'wb') as file:
             im = urllib.request.urlopen(i)
             file.write(im.read())
-        file.close()
-        print(f + " saved\n")
+            file.close()
+            im.close()
+        print(f + " saved\n", flush=True, end="")
     except urllib.error.HTTPError:
-        print(f + " not saved (404)\n")
+        print(f + " not saved (404)\n", flush=True, end="")
         pass
     except urllib.error.URLError:
-        print(f + "not saved (???)\n")
+        print(f + "not saved (???)\n", flush=True, end="")
         pass
 
 
@@ -160,11 +131,9 @@ def main():
     print("4chan image saver\nConnecting to 4chan API...")
     global boards
     boards = get_boards()
-    if len(boards) > 0:
-        print("\nFound the following boards:")
-        print(textwrap.fill(str(boards), 80))
-    else:
+    if len(boards) == 0:
         f_exit()
+
     print("\nReady to go\n")
 
     try:
@@ -173,31 +142,47 @@ def main():
         pass
 
     while True:
-        currentboard = str(input("Enter board (or exit): "))
+        currentboard = str(input("Enter board/exit: "))
         if currentboard.lower() in exits:
             f_exit()
 
-        currentboard = board_check(currentboard)
-        if len(currentboard) == 0:
+        if not board_check(currentboard):
             print("Invalid board, try again")
             continue
+
+        # create board folder if not present
+        try:
+            os.makedirs(basedir+board_slash(currentboard))
+        except FileExistsError:
+            pass
+        except IOError:
+            f_exit()
 
         threads = get_threads(currentboard)
         print("\nGot the thread numbers\n")
 
+        res_links = []
+        dl_threads = []
+
         tuples = []
         for thread in threads:
-            tuples.append((currentboard, thread))
+            tuples.append((currentboard, str(thread), res_links))
 
-        with Pool(60) as p:
-            res_links = p.starmap(save_links, tuples)
-        p.close()
+        for tu in tuples:
+            t = threading.Thread(target=save_links, args=tu)
+            dl_threads.append(t)
+            t.start()
+
+        for t in dl_threads:
+            t.join()
+
+        # print(res_links)
+        # exit(1)
 
         file_links = []
         for res in res_links:
             if res is not None:
-                for link in res:
-                    file_links.append((currentboard, link[0], link[1]))
+                file_links.append((currentboard, res[0], res[1]))
 
         print("Got all image links, starting download...\n")
 
@@ -211,10 +196,7 @@ def main():
         for t in dl_threads:
             t.join()
 
-        print("Got all images currently on board " + board_slash(currentboard) + "\n")
-
-        if platform.system().lower() == "windows":
-            ctypes.windll.user32.FlashWindow(ctypes.windll.kernel32.GetConsoleWindow(), True)
+        print("\nGot all images currently on board " + board_slash(currentboard) + "\n")
 
 
 if __name__ == "__main__":
