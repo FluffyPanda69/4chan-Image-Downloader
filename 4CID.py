@@ -103,7 +103,7 @@ def save_links(board, thread_number, image_links):
             continue
         # rebuild valid link
         image = http + image
-        if len(image) > 32:
+        if len(image) > 30:
             image_links.append((image, filename))
 
 
@@ -113,9 +113,9 @@ def download_link(b, i, f):
     try:
         with open(savepath + f, 'wb') as file:
             im = urllib.request.urlopen(i)
-            file.write(im.read())
-            file.close()
-            im.close()
+            im = im.read()
+            if im is not None:
+                file.write(im)
         print(f + " saved\n", flush=True, end="")
     except urllib.error.HTTPError:
         print(f + " not saved (404)\n", flush=True, end="")
